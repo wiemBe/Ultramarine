@@ -99,7 +99,7 @@ func main() {
 		err := db.QueryRow("SELECT id, station FROM queue ORDER BY id LIMIT 1").Scan(&nextStation.ID, &nextStation.Number)
 		if err == sql.ErrNoRows {
 			ctx.JSON(404, gin.H{
-				"message": "Queue is empty",
+				"station": "Queue is empty",
 			})
 			return
 		} else if err != nil {
@@ -121,7 +121,7 @@ func main() {
 
 	server.GET("/", func(ctx *gin.Context) {
 		ctx.HTML(200, "index.html", gin.H{
-			"Title":   "welcome to api's",
+			"Title":   "UltraMarines",
 			"Message": "this is message rendered",
 		})
 	})
