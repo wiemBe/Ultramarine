@@ -1,6 +1,6 @@
 import requests
 import time
-
+#TODO:learn how to start at boot
 url =  "http://localhost:8080/available"
 
 is_Have_Job = False
