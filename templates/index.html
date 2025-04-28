@@ -1,90 +1,127 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>{{ .Title }}</title>
+    <title>{{ .Title }}</title> <!-- Title set by Go backend -->
     <style>
         body {
             display: flex;
-            flex-direction: column; /* Align items vertically */
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh; /* Use min-height */
-            margin: 20px; /* Add some margin */
+            flex-direction: column; /* Arrange sections vertically */
+            align-items: center; /* Center content horizontally */
+            min-height: 100vh;
+            margin: 20px; /* Add some overall margin */
             font-family: Arial, sans-serif;
             box-sizing: border-box;
         }
 
+        /* Controls Section */
         .controls-container {
-            margin-bottom: 30px; /* Space below buttons */
-            text-align: center; /* Center title */
+            margin-bottom: 30px;
+            text-align: center;
+            width: 100%;
+            max-width: 500px; /* Limit width */
         }
-
         .button-container {
             display: flex;
             flex-wrap: wrap;
             justify-content: center;
-            gap: 15px; /* Smaller gap */
-            max-width: 450px; /* Slightly wider container */
+            gap: 15px;
             margin-top: 10px;
         }
-
         .button {
-            border: none;
-            color: white;
-            padding: 12px 25px; /* Adjusted padding */
-            text-align: center;
-            text-decoration: none;
-            font-size: 14px; /* Slightly smaller font */
-            cursor: pointer;
-            border-radius: 5px; /* Rounded corners */
-            flex: 1 1 40%; /* Adjust flex basis */
-            transition: background-color 0.3s ease; /* Smooth hover */
+            border: none; color: white; padding: 12px 25px; text-align: center;
+            text-decoration: none; font-size: 14px; cursor: pointer;
+            border-radius: 5px; flex: 1 1 40%; transition: background-color 0.3s ease;
         }
-        .button:hover {
-             opacity: 0.9;
-        }
-
-        .button1 { background-color: #0511FF; } /* Hex colors */
-        .button2 { background-color: #DB2717; }
-        .button3 { background-color: #000000; }
-        .button4 { background-color: #5FFF02; }
-        #refreshButton { /* Style for refresh button */
-             background-color: #6c757d;
+        .button:hover { opacity: 0.9; }
+        .button1 { background-color: #0511FF; } /* Blue */
+        .button2 { background-color: #DB2717; } /* Red */
+        .button3 { background-color: #000000; } /* Black */
+        .button4 { background-color: #5FFF02; } /* Green */
+        #refreshButton, #refreshMapBtn { /* Common style for refresh buttons */
+             background-color: #6c757d; /* Gray */
              margin-top: 15px;
              flex-basis: 100%; /* Make it full width */
         }
 
+        /* Task Queue Display Section */
+        #taskQueueDisplayContainer {
+            margin-top: 20px; text-align: left; width: 100%;
+            max-width: 500px; border: 1px solid #ddd; padding: 15px;
+            border-radius: 5px; background-color: #fdfdfd;
+        }
+         #taskQueueDisplayContainer h2 { text-align: center; margin-top: 0; margin-bottom: 10px; }
+         #taskQueueDisplayContainer ul { list-style: none; padding: 0; margin:0; max-height: 150px; overflow-y: auto; }
+         #taskQueueDisplayContainer li { margin-bottom: 5px; padding: 5px; border-radius: 3px; font-size: 0.9em;}
+         .task-pending { background-color: #fff3cd; color: #856404;} /* Light Yellow */
+         .task-assigned { background-color: #d1ecf1; color: #0c5460;} /* Light Blue */
+         .task-completed { background-color: #d4edda; text-decoration: line-through; color: #155724;} /* Light Green */
+         .task-failed { background-color: #f8d7da; text-decoration: line-through; color: #721c24;} /* Light Red */
 
-        #queueDisplayContainer {
-            margin-top: 20px;
-            text-align: left; /* Left align text within the container */
-            width: 100%;
-            max-width: 450px; /* Match button container width */
-            border: 1px solid #ccc;
-            padding: 15px;
-            border-radius: 5px;
-            background-color: #f9f9f9;
+
+        /* Map Visualization Section */
+        #mapDisplayContainer {
+            margin-top: 30px; text-align: left; width: 100%;
+            /* Adjust max-width as needed for your map size */
+            max-width: 90%; /* Allow map to be wider */
+            border: 1px solid #ccc; padding: 15px; border-radius: 5px;
+            background-color: #f0f0f0;
         }
-        #queueDisplayContainer h2 {
-             text-align: center;
-             margin-top: 0;
+         #mapDisplayContainer h2 { text-align: center; margin-top: 0; margin-bottom: 10px;}
+        #mapContainer {
+            display: grid; /* Grid layout for map */
+            border: 1px solid #aaa;
+            position: relative; /* For positioning robots absolutely */
+            margin: 0 auto; /* Center the map grid */
+            width: fit-content; /* Size grid to content */
+            overflow: hidden; /* Prevent robots sticking out */
         }
-        #queueDisplayContainer ul {
-             list-style: none;
-             padding: 0;
+        .cell {
+            /* Adjust size for visibility - smaller for large maps */
+            width: 7px;
+            height: 7px;
+            box-sizing: border-box;
+            border: 1px solid #eee; /* Very light grid lines */
+            font-size: 5px; /* For station numbers */
+            line-height: 7px;
+            text-align: center;
+            overflow: hidden;
+            user-select: none; /* Prevent text selection */
         }
-         #queueDisplayContainer li {
-             margin-bottom: 5px;
-             padding: 5px;
-             border-radius: 3px;
+        .free { background-color: #333; } /* White = Free */
+        .wall { background-color: #fff; } /* Dark gray = Obstacle */
+        .station {
+             background-color: #4CAF50; /* Green background for stations */
+             border: 1px solid darkgreen;
+             font-weight: bold;
+             color: white;
          }
-        .status-pending { background-color: #ffc107; color: #333; } /* Yellowish */
-        .status-assigned { background-color: #17a2b8; color: white; } /* Teal */
+        .robot {
+            position: absolute;
+            width: 7px;  /* Match cell size */
+            height: 7px; /* Match cell size */
+            background-color: #00FF00; /* Bright Green robot */
+            border-radius: 50%;
+            z-index: 10;
+            transition: transform 0.3s linear; /* Smooth movement using transform */
+            box-sizing: border-box;
+            border: 1px solid darkgreen;
+            /* Arrow styling */
+            display: flex; justify-content: center; align-items: center;
+            font-size: 5px; line-height: 7px; color: black; font-weight: bold;
+        }
+        /* Orientation Arrows using pseudo-elements */
+        .robot::after { content: ''; display: block; }
+        .robot.theta-0::after { content: '\2191'; } /* ↑ N */
+        .robot.theta-1::after { content: '\2192'; } /* → E */
+        .robot.theta-2::after { content: '\2193'; } /* ↓ S */
+        .robot.theta-3::after { content: '\2190'; } /* ← W */
+        #robotInfo { margin-top: 15px; font-size: 0.9em; }
+        #robotInfo ul { padding-left: 20px; margin: 5px 0;}
 
     </style>
 </head>
 <body>
-    <!-- Renamed container for clarity -->
+    <!-- Control Section -->
     <div class="controls-container">
         <h1>Robot Task Assigner</h1>
         <div class="button-container">
@@ -92,128 +129,238 @@
             <button class="button button2" data-station="2">İstasyon 2</button>
             <button class="button button3" data-station="3">İstasyon 3</button>
             <button class="button button4" data-station="4">İstasyon 4</button>
-            <!-- Added Refresh Button -->
-            <button class="button" id="refreshButton">Refresh Queue</button>
+            <!-- Add more station buttons if needed -->
+            <button class="button" id="refreshButton">Refresh Task Queue</button>
         </div>
     </div>
 
-    <div id="queueDisplayContainer">
-        <h2>Current Queue State</h2>
-        <div id="queueDisplay">Loading...</div>
+    <!-- Task Queue Display Section -->
+    <div id="taskQueueDisplayContainer">
+        <h2>Task Queue</h2>
+        <div id="taskQueueDisplay">Loading Tasks...</div>
     </div>
+
+    <!-- Map Visualization Section -->
+    <div id="mapDisplayContainer">
+        <h2>Live Map State</h2>
+        <button id="refreshMapBtn">Refresh Map & Robots</button>
+        <div id="mapContainer">Loading Map...</div>
+        <div id="robotInfo"></div>
+    </div>
+
 
     <script>
         const API_BASE_URL = ''; // Use relative path if served from same origin
-        const REFRESH_INTERVAL_MS = 10000; // Refresh every 10 seconds
+        const TASK_REFRESH_INTERVAL_MS = 7000; // Refresh task queue less often
+        const MAP_REFRESH_INTERVAL_MS = 3000; // Refresh map/robots more often
+        const CELL_SIZE_PX = 7; // IMPORTANT: Must match .cell width/height in CSS
 
-        const queueDisplayDiv = document.getElementById('queueDisplay');
-        const buttons = document.querySelectorAll('.button-container .button[data-station]'); // Select only station buttons
-        const refreshButton = document.getElementById('refreshButton');
+        // --- DOM Elements ---
+        const taskQueueDisplayDiv = document.getElementById('taskQueueDisplay');
+        const stationButtons = document.querySelectorAll('.controls-container .button[data-station]');
+        const taskRefreshButton = document.getElementById('refreshButton');
+        const mapContainer = document.getElementById('mapContainer');
+        const robotInfoDiv = document.getElementById('robotInfo');
+        const mapRefreshBtn = document.getElementById('refreshMapBtn');
 
-        // --- Function to Fetch and Update Display ---
-        function fetchAndUpdateQueueDisplay() {
-            fetch(`${API_BASE_URL}/tasks`) // Use GET /tasks endpoint
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
-                    return response.json();
-                })
+        let currentRobots = {}; // Store robot DOM elements: { taskId: element }
+        let mapRendered = false; // Flag to render map grid only once initially
+
+        // Constants for Map Cell Types (mirroring Go code)
+        const CELL_FREE_JS = 0;
+        const CELL_OBSTACLE_JS = 1;
+
+        // --- Task Queue Functions ---
+        function fetchAndUpdateTaskQueue() {
+            fetch(`${API_BASE_URL}/tasks`)
+                .then(response => response.ok ? response.json() : Promise.reject(`HTTP error ${response.status}`))
                 .then(data => {
                     if (data.tasks && Array.isArray(data.tasks)) {
-                        updateQueueDisplay(data.tasks);
+                        updateTaskQueueDisplay(data.tasks);
                     } else {
-                        console.error("Invalid data structure received:", data);
-                        queueDisplayDiv.innerHTML = '<p>Error: Invalid data received from server.</p>';
+                        taskQueueDisplayDiv.innerHTML = '<p>Error: Invalid task data format.</p>';
                     }
                 })
                 .catch(error => {
-                    console.error('Error fetching queue:', error);
-                    queueDisplayDiv.innerHTML = `<p>Error loading queue data: ${error.message}.</p>`;
+                    console.error('Error fetching tasks:', error);
+                    taskQueueDisplayDiv.innerHTML = `<p>Error loading tasks: ${error}.</p>`;
                 });
         }
 
-        // --- Function to Update the HTML Display ---
-        function updateQueueDisplay(tasks) {
+        function updateTaskQueueDisplay(tasks) {
              let html = '<ul>';
              if (tasks.length === 0) {
-                  html += '<li>Queue is currently empty.</li>';
+                  html += '<li>No tasks in queue.</li>';
              } else {
                  tasks.forEach(task => {
-                     // Add classes based on status for styling
-                     html += `<li class="status-${task.status}">`;
-                     html += `Task ID: ${task.id} | Station: ${task.station} | Status: <strong>${task.status}</strong>`;
-                     if(task.assigned_robot_id) {
-                          html += ` | Assigned to: ${task.assigned_robot_id}`;
-                     }
+                     const date = new Date(task.created_at).toLocaleString();
+                     html += `<li class="task-${task.status}">`;
+                     html += `ID: ${task.id} | Sta: ${task.station} | Status: <strong>${task.status}</strong> | Created: ${date}`;
                      html += `</li>`;
                  });
              }
              html += '</ul>';
-             queueDisplayDiv.innerHTML = html;
+             taskQueueDisplayDiv.innerHTML = html;
         }
 
-
-        // --- Function to Add a Task ---
         function addTaskToServer(stationNumber) {
-            console.log(`Attempting to add task for station: ${stationNumber}`);
-            fetch(`${API_BASE_URL}/tasks`, { // Use POST /tasks endpoint
+            console.log(`Adding task for station: ${stationNumber}`);
+            fetch(`${API_BASE_URL}/tasks`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ station: stationNumber }), // Correct payload
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ station: stationNumber }),
             })
-            .then(response => {
-                 // Check status code for success (201) or specific errors
-                 if (response.status === 201) { // Created successfully
-                     return response.json().then(data => ({ ok: true, data }));
-                 } else {
-                      // Try to parse error JSON for more details
-                      return response.json().catch(() => ({})).then(errorData => ({
-                           ok: false,
-                           status: response.status,
-                           error: errorData.error || `HTTP Error ${response.status}` // Use server error or default
-                      }));
-                 }
-            })
+            .then(response => response.json().then(data => ({ ok: response.ok, status: response.status, data })))
             .then(result => {
                 if (result.ok) {
-                    alert(`Task successfully added for Station ${stationNumber} (ID: ${result.data.id})`);
-                    fetchAndUpdateQueueDisplay(); // Refresh the display immediately
+                    alert(`Task added for Station ${stationNumber} (ID: ${result.data.id})`);
+                    fetchAndUpdateTaskQueue(); // Refresh queue immediately
                 } else {
-                    // Handle specific known errors or show generic message
-                    let errorMsg = result.error; // Use the error message from the response
-                    if (result.status === 429 || result.status === 503) { // Specific handling for queue full
-                         errorMsg = `Failed to add task: ${result.error || 'Queue is likely full.'}`;
-                    }
-                    alert(errorMsg);
+                    alert(`Failed to add task: ${result.data.error || `Server error ${result.status}`}`);
                     console.error('Error adding task:', result);
                 }
             })
-            .catch(error => { // Catch network errors etc.
-                console.error('Network Error:', error);
-                alert(`Network error adding task: ${error.message}`);
+            .catch(error => {
+                console.error('Network Error adding task:', error);
+                alert(`Network error: ${error.message}`);
             });
         }
 
-        // --- Attach Event Listeners ---
-        buttons.forEach(button => {
+        // --- Map Visualization Functions ---
+        function renderMapGrid(mapData, stationLocations) {
+            if (!mapData || !mapData.grid) {
+                console.error("Invalid map data received for rendering");
+                mapContainer.innerHTML = "Error: Invalid map data structure."
+                return;
+            }
+            mapContainer.innerHTML = ''; // Clear previous map/loading text
+            mapContainer.style.gridTemplateColumns = `repeat(${mapData.width}, ${CELL_SIZE_PX}px)`;
+            mapContainer.style.width = `${mapData.width * CELL_SIZE_PX}px`;
+
+            // Create a quick lookup for station locations { "x-y": stationId }
+            const stationPoints = {};
+            if (stationLocations) {
+                for (const id in stationLocations) {
+                    const point = stationLocations[id];
+                    stationPoints[`${point.X}-${point.Y}`] = id; // Note: Go sends X, Y capitalized
+                }
+            }
+
+            for (let y = 0; y < mapData.height; y++) {
+                for (let x = 0; x < mapData.width; x++) {
+                    const cell = document.createElement('div');
+                    cell.classList.add('cell');
+                    cell.id = `cell-${x}-${y}`;
+
+                    const locationKey = `${x}-${y}`;
+                    const stationId = stationPoints[locationKey]; // Check if current cell is a station
+
+                    if (stationId) {
+                         cell.classList.add('station'); // Apply station style
+                         cell.textContent = stationId; // Show station number
+                         cell.title = `Station ${stationId} at (${x},${y})`; // Tooltip
+                    } else if (mapData.grid[y][x] === CELL_OBSTACLE_JS) {
+                        cell.classList.add('wall'); // Apply wall style
+                    } else {
+                        cell.classList.add('free'); // Apply free space style
+                    }
+                    mapContainer.appendChild(cell);
+                }
+            }
+            mapRendered = true;
+             // Clear any potentially orphaned robot elements
+             Object.values(currentRobots).forEach(robotElement => robotElement.remove());
+             currentRobots = {};
+        }
+
+        function updateRobotsOnMap(robots) {
+            let infoHtml = '<h2>Active Robots:</h2><ul>';
+            const activeRobotIds = new Set(); // Keep track of robots reported by server this cycle
+
+            if (!robots || robots.length === 0) {
+                 infoHtml += '<li>No active robots reporting.</li>';
+            } else {
+                robots.forEach(robot => {
+                    if (robot.task_id === undefined || robot.x === undefined || robot.y === undefined) {
+                        console.warn("Received incomplete robot data:", robot);
+                        return; // Skip malformed robot data
+                    }
+                    activeRobotIds.add(robot.task_id); // Add to set of active robots
+                    infoHtml += `<li>Task ${robot.task_id}: Pos(${robot.x}, ${robot.y}), Theta=${robot.theta}, Status=${robot.status}</li>`;
+
+                    let robotElement = currentRobots[robot.task_id]; // Try to find existing DOM element
+
+                    if (!robotElement) { // Create new robot element if it doesn't exist
+                        robotElement = document.createElement('div');
+                        robotElement.classList.add('robot');
+                        robotElement.id = `robot-${robot.task_id}`;
+                        mapContainer.appendChild(robotElement); // Append to map container
+                        currentRobots[robot.task_id] = robotElement; // Store ref
+                        console.log(`Creating robot element for task ${robot.task_id}`);
+                    }
+
+                    // Update position using CSS transforms
+                    robotElement.style.transform = `translate(${robot.x * CELL_SIZE_PX}px, ${robot.y * CELL_SIZE_PX}px)`;
+
+                    // Update orientation class (reset first)
+                    robotElement.className = 'robot'; // Reset classes except 'robot'
+                    robotElement.classList.add(`theta-${robot.theta}`);
+                });
+            }
+
+             // Remove DOM elements for robots that were previously tracked but are *not* in the current server response
+             for (const trackedTaskIdStr in currentRobots) {
+                  const trackedTaskId = parseInt(trackedTaskIdStr, 10);
+                  if (!activeRobotIds.has(trackedTaskId)) {
+                       console.log(`Removing stale robot element for task ${trackedTaskId}`);
+                       currentRobots[trackedTaskId].remove(); // Remove from DOM
+                       delete currentRobots[trackedTaskId]; // Remove from tracking object
+                  }
+             }
+
+            infoHtml += '</ul>';
+            robotInfoDiv.innerHTML = infoHtml;
+        }
+
+        function fetchMapState() {
+            // console.log("Fetching map state..."); // Less verbose logging
+            fetch(`${API_BASE_URL}/map/state`)
+                .then(response => response.ok ? response.json() : Promise.reject(`Map HTTP error ${response.status}`))
+                .then(data => {
+                    // console.log("Received map state:", data);
+                    if (!mapRendered) { // Render map grid only once
+                        renderMapGrid(data.map, data.station_locs || {}); // Pass station_locs
+                    }
+                    // Always update robot positions
+                    updateRobotsOnMap(data.robots || []); // Ensure robots is an array
+                })
+                .catch(error => {
+                    console.error('Error fetching map state:', error);
+                    if (!mapRendered) mapContainer.innerHTML = `Error loading map: ${error}`;
+                    robotInfoDiv.innerHTML = `<p>Error loading robot data: ${error}</p>`;
+                });
+        }
+
+        // --- Event Listeners ---
+        stationButtons.forEach(button => {
             button.addEventListener('click', () => {
                 const station = parseInt(button.getAttribute('data-station'), 10);
-                if (!isNaN(station)) {
-                    addTaskToServer(station);
-                }
+                if (!isNaN(station)) { addTaskToServer(station); }
             });
         });
 
-        refreshButton.addEventListener('click', fetchAndUpdateQueueDisplay);
+        taskRefreshButton.addEventListener('click', fetchAndUpdateTaskQueue);
+        mapRefreshBtn.addEventListener('click', fetchMapState);
 
         // --- Initial Load and Periodic Refresh ---
         document.addEventListener('DOMContentLoaded', () => {
-             console.log("DOM loaded, fetching initial queue state.");
-             fetchAndUpdateQueueDisplay(); // Load queue state when page loads
-             setInterval(fetchAndUpdateQueueDisplay, REFRESH_INTERVAL_MS); // Refresh periodically
+             console.log("DOM loaded. Initializing...");
+             fetchAndUpdateTaskQueue(); // Load initial task queue
+             fetchMapState(); // Load initial map state
+
+             // Set up automatic refreshes
+             setInterval(fetchAndUpdateTaskQueue, TASK_REFRESH_INTERVAL_MS);
+             setInterval(fetchMapState, MAP_REFRESH_INTERVAL_MS);
         });
 
     </script>
