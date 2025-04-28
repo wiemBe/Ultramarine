@@ -5,101 +5,217 @@
     <style>
         body {
             display: flex;
+            flex-direction: column; /* Align items vertically */
             justify-content: center;
             align-items: center;
-            height: 100vh;
-            margin: 0;
+            min-height: 100vh; /* Use min-height */
+            margin: 20px; /* Add some margin */
             font-family: Arial, sans-serif;
+            box-sizing: border-box;
+        }
+
+        .controls-container {
+            margin-bottom: 30px; /* Space below buttons */
+            text-align: center; /* Center title */
         }
 
         .button-container {
             display: flex;
             flex-wrap: wrap;
             justify-content: center;
-            gap: 20px;
-            width: 400px;
+            gap: 15px; /* Smaller gap */
+            max-width: 450px; /* Slightly wider container */
+            margin-top: 10px;
         }
 
         .button {
             border: none;
             color: white;
-            padding: 15px 32px;
+            padding: 12px 25px; /* Adjusted padding */
             text-align: center;
             text-decoration: none;
-            font-size: 16px;
+            font-size: 14px; /* Slightly smaller font */
             cursor: pointer;
-            flex: 1 1 45%;
+            border-radius: 5px; /* Rounded corners */
+            flex: 1 1 40%; /* Adjust flex basis */
+            transition: background-color 0.3s ease; /* Smooth hover */
+        }
+        .button:hover {
+             opacity: 0.9;
         }
 
-        .button1 { background-color: rgb(5, 17, 255); }
-        .button2 { background-color: rgb(219, 39, 23); }
-        .button3 { background-color: rgb(0, 0, 0); }
-        .button4 { background-color: rgb(95, 255, 2); }
+        .button1 { background-color: #0511FF; } /* Hex colors */
+        .button2 { background-color: #DB2717; }
+        .button3 { background-color: #000000; }
+        .button4 { background-color: #5FFF02; }
+        #refreshButton { /* Style for refresh button */
+             background-color: #6c757d;
+             margin-top: 15px;
+             flex-basis: 100%; /* Make it full width */
+        }
 
-        #queueDisplay {
+
+        #queueDisplayContainer {
             margin-top: 20px;
-            text-align: center;
+            text-align: left; /* Left align text within the container */
+            width: 100%;
+            max-width: 450px; /* Match button container width */
+            border: 1px solid #ccc;
+            padding: 15px;
+            border-radius: 5px;
+            background-color: #f9f9f9;
         }
+        #queueDisplayContainer h2 {
+             text-align: center;
+             margin-top: 0;
+        }
+        #queueDisplayContainer ul {
+             list-style: none;
+             padding: 0;
+        }
+         #queueDisplayContainer li {
+             margin-bottom: 5px;
+             padding: 5px;
+             border-radius: 3px;
+         }
+        .status-pending { background-color: #ffc107; color: #333; } /* Yellowish */
+        .status-assigned { background-color: #17a2b8; color: white; } /* Teal */
+
     </style>
 </head>
 <body>
-    <div>
+    <!-- Renamed container for clarity -->
+    <div class="controls-container">
+        <h1>Robot Task Assigner</h1>
         <div class="button-container">
-            <button class="button button1" id="button1">İstasyon 1</button>
-            <button class="button button2" id="button2">İstasyon 2</button>
-            <button class="button button3" id="button3">İstasyon 3</button>
-            <button class="button button4" id="button4">İstasyon 4</button>
+            <button class="button button1" data-station="1">İstasyon 1</button>
+            <button class="button button2" data-station="2">İstasyon 2</button>
+            <button class="button button3" data-station="3">İstasyon 3</button>
+            <button class="button button4" data-station="4">İstasyon 4</button>
+            <!-- Added Refresh Button -->
+            <button class="button" id="refreshButton">Refresh Queue</button>
         </div>
-        <div id="queueDisplay"></div>
     </div>
-    
+
+    <div id="queueDisplayContainer">
+        <h2>Current Queue State</h2>
+        <div id="queueDisplay">Loading...</div>
+    </div>
+
     <script>
-        let queue = [];
-        const QUEUE_LIMIT = 5;
+        const API_BASE_URL = ''; // Use relative path if served from same origin
+        const REFRESH_INTERVAL_MS = 10000; // Refresh every 10 seconds
 
-        function updateQueueDisplay() {
-            const queueDisplay = document.getElementById('queueDisplay');
-            queueDisplay.innerHTML = 'Queue: ' + queue.join(', ') + '<br>Remaining slots: ' + (QUEUE_LIMIT - queue.length);
+        const queueDisplayDiv = document.getElementById('queueDisplay');
+        const buttons = document.querySelectorAll('.button-container .button[data-station]'); // Select only station buttons
+        const refreshButton = document.getElementById('refreshButton');
+
+        // --- Function to Fetch and Update Display ---
+        function fetchAndUpdateQueueDisplay() {
+            fetch(`${API_BASE_URL}/tasks`) // Use GET /tasks endpoint
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.tasks && Array.isArray(data.tasks)) {
+                        updateQueueDisplay(data.tasks);
+                    } else {
+                        console.error("Invalid data structure received:", data);
+                        queueDisplayDiv.innerHTML = '<p>Error: Invalid data received from server.</p>';
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching queue:', error);
+                    queueDisplayDiv.innerHTML = `<p>Error loading queue data: ${error.message}.</p>`;
+                });
         }
 
-        function addToQueue(stationNumber) {
-         fetch('http://localhost:8080/que', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ station: stationNumber }),
-        })
-        .then(response => response.json())
-        .then(data => {
-        if (data.onQue === "1") {
-            queue.push('İstasyon ' + stationNumber);
-            updateQueueDisplay();
-            alert("Added to queue: İstasyon " + stationNumber);
-        } else {
-            alert(data.message || "Failed to add to queue");
+        // --- Function to Update the HTML Display ---
+        function updateQueueDisplay(tasks) {
+             let html = '<ul>';
+             if (tasks.length === 0) {
+                  html += '<li>Queue is currently empty.</li>';
+             } else {
+                 tasks.forEach(task => {
+                     // Add classes based on status for styling
+                     html += `<li class="status-${task.status}">`;
+                     html += `Task ID: ${task.id} | Station: ${task.station} | Status: <strong>${task.status}</strong>`;
+                     if(task.assigned_robot_id) {
+                          html += ` | Assigned to: ${task.assigned_robot_id}`;
+                     }
+                     html += `</li>`;
+                 });
+             }
+             html += '</ul>';
+             queueDisplayDiv.innerHTML = html;
         }
-    })
-    .catch(error => {
-        console.error('Error:', error);
-        alert("Error adding to queue");
-    });
-}
-        document.getElementById("button1").addEventListener("click", function() {
-            addToQueue(1);
-        });
-        document.getElementById("button2").addEventListener("click", function() {
-            addToQueue(2);
-        });
-        document.getElementById("button3").addEventListener("click", function() {
-            addToQueue(3);
-        });
-        document.getElementById("button4").addEventListener("click", function() {
-            addToQueue(4);
+
+
+        // --- Function to Add a Task ---
+        function addTaskToServer(stationNumber) {
+            console.log(`Attempting to add task for station: ${stationNumber}`);
+            fetch(`${API_BASE_URL}/tasks`, { // Use POST /tasks endpoint
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ station: stationNumber }), // Correct payload
+            })
+            .then(response => {
+                 // Check status code for success (201) or specific errors
+                 if (response.status === 201) { // Created successfully
+                     return response.json().then(data => ({ ok: true, data }));
+                 } else {
+                      // Try to parse error JSON for more details
+                      return response.json().catch(() => ({})).then(errorData => ({
+                           ok: false,
+                           status: response.status,
+                           error: errorData.error || `HTTP Error ${response.status}` // Use server error or default
+                      }));
+                 }
+            })
+            .then(result => {
+                if (result.ok) {
+                    alert(`Task successfully added for Station ${stationNumber} (ID: ${result.data.id})`);
+                    fetchAndUpdateQueueDisplay(); // Refresh the display immediately
+                } else {
+                    // Handle specific known errors or show generic message
+                    let errorMsg = result.error; // Use the error message from the response
+                    if (result.status === 429 || result.status === 503) { // Specific handling for queue full
+                         errorMsg = `Failed to add task: ${result.error || 'Queue is likely full.'}`;
+                    }
+                    alert(errorMsg);
+                    console.error('Error adding task:', result);
+                }
+            })
+            .catch(error => { // Catch network errors etc.
+                console.error('Network Error:', error);
+                alert(`Network error adding task: ${error.message}`);
+            });
+        }
+
+        // --- Attach Event Listeners ---
+        buttons.forEach(button => {
+            button.addEventListener('click', () => {
+                const station = parseInt(button.getAttribute('data-station'), 10);
+                if (!isNaN(station)) {
+                    addTaskToServer(station);
+                }
+            });
         });
 
-        // Initial display update
-        updateQueueDisplay();
+        refreshButton.addEventListener('click', fetchAndUpdateQueueDisplay);
+
+        // --- Initial Load and Periodic Refresh ---
+        document.addEventListener('DOMContentLoaded', () => {
+             console.log("DOM loaded, fetching initial queue state.");
+             fetchAndUpdateQueueDisplay(); // Load queue state when page loads
+             setInterval(fetchAndUpdateQueueDisplay, REFRESH_INTERVAL_MS); // Refresh periodically
+        });
+
     </script>
 </body>
 </html>
