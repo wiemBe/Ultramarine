@@ -1,492 +1,268 @@
-#include <Arduino.h>
-// #include <PID_v1.h> // Highly recommended: Install PID library by Brett Beauregard
+// =====================================================================
+// ==  INTEGRATED ROBOT CONTROLLER FOR ARDUINO MEGA                   ==
+// ==  Listens to commands from ESP, controls motors, and reports back ==
+// =====================================================================
 
-// --- Pin Definitions (MODIFY THESE!) ---
-// L298N Motor Driver Pins
-const int ENA = 5;  // Left Motor Speed (PWM)
-const int IN1 = 7;  // Left Motor Direction 1
-const int IN2 = 8;  // Left Motor Direction 2
-const int ENB = 6;  // Right Motor Speed (PWM)
-const int IN3 = 9;  // Right Motor Direction 1
-const int IN4 = 11; // Right Motor Direction 2
+// --- Communication with ESP8266 ---
+#define ESP_SERIAL Serial2
+const unsigned long ESP_BAUD_RATE = 9600; // MUST MATCH ESP8266 CODE
+String espSerialBuffer = "";
+bool commandReady = false;
+bool isInitialized = false; 
+unsigned long lastInitSendTime = 0;
 
-// Encoder Pins (Using Interrupts)
-const int ENCODER_LEFT_A = 2;  // Interrupt 0 (Pin 2 on Uno/Mega) - MUST be interrupt pin
-const int ENCODER_LEFT_B = 4;  // Non-interrupt pin (used for direction)
-const int ENCODER_RIGHT_A = 3; // Interrupt 1 (Pin 3 on Uno/Mega) - MUST be interrupt pin
-const int ENCODER_RIGHT_B = 12; // Non-interrupt pin (used for direction)
-
-// Ultrasonic Sensor Pins
-const int TRIG_PIN = 10;
-const int ECHO_PIN = 13;
-
-
-// --- NEW: Robot Orientation Constants (Matching ESP/Server) ---
-const int OrientationNorth = 0;
-const int OrientationEast  = 1;
-const int OrientationSouth = 2;
-const int OrientationWest  = 3;
-
-// --- Calibration Constants (MODIFY THESE!) ---
-const double WHEEL_DIAMETER_CM = 6.5;         // Diameter of your robot wheels in cm
-const double WHEEL_SEPARATION_CM = 15.0;      // Distance between the centers of the two wheels in cm
-const double ENCODER_COUNTS_PER_REV = 400.0; // Pulses/counts from ONE encoder for a full wheel revolution
-const double CM_PER_GRID_CELL = 20.0;         // How many cm corresponds to one grid unit (e.g., FORWARD(1))
-
-const double TARGET_DISTANCE_PER_FORWARD = CM_PER_GRID_CELL; // Target distance in CM for a FORWARD(1) command
-const double TARGET_RADIANS_PER_TURN = HALF_PI; // Target angle in radians for a 90-degree turn (PI/2)
-
-const double WHEEL_CIRCUMFERENCE_CM = PI * WHEEL_DIAMETER_CM;
-const double CM_PER_ENCODER_COUNT = WHEEL_CIRCUMFERENCE_CM / ENCODER_COUNTS_PER_REV;
-
-// --- Movement & Control ---
-const int MAX_PWM = 200; // Max motor PWM value (0-255) - Limit for smoother control
-const int BASE_SPEED_PWM = 100; // Default speed when moving straight/turning
-const unsigned long SENSOR_READ_INTERVAL_MS = 50; // How often to check obstacle sensor (ms)
-const double OBSTACLE_THRESHOLD_CM = 15.0; // Stop if obstacle closer than this (cm)
-
-// --- PID Constants (PLACEHOLDER - TUNING REQUIRED!) ---
-// double Kp = 2.0, Ki = 0.5, Kd = 1.0;
-// You'd typically have separate PID for:
-// 1. Maintaining heading while moving forward (adjusting left/right speeds)
-// 2. Reaching target distance (controlling overall speed)
-// 3. Reaching target angle during turns (controlling differential speed)
-// For simplicity here, we'll use basic speed control.
-
-// --- Odometry Variables ---
-volatile long encoderLeftCount = 0;
-volatile long encoderRightCount = 0;
-long lastLeftCount = 0;
-long lastRightCount = 0;
-double currentX_Grid = 0.0; // Robot position in grid units
-double currentY_Grid = 0.0;
-double currentTheta_Rad = 0.0; // Robot orientation in radians (0 = East/X+, PI/2 = North/Y+)
-
-// --- State Machine ---
-enum RobotState {
-    STATE_IDLE,
-    STATE_MOVING_FORWARD,
-    STATE_TURNING
+// --- Robot State (Grid Coordinates) ---
+struct RobotState {
+  int x;
+  int y;
+  int theta; // 0:North, 1:East, 2:South, 3:West
 };
-RobotState currentState = STATE_IDLE;
+RobotState robotState = {0, 0, 0}; // Initial position at (0,0) facing North
 
-// --- Target State for Movement ---
-double targetDistanceCm = 0.0;
-double targetThetaRad = 0.0;
-double distanceMovedCm = 0.0;
-double angleTurnedRad = 0.0;
-bool targetReached = false;
+// --- Physical Constants (IMPORTANT: TUNE THESE FOR YOUR ROBOT!) ---
+const float GRID_CELL_DISTANCE_MM = 200.0; // <<<--- TUNE: How many mm is one "FORWARD(1)" move?
+const float DEGREES_TO_MM_90_TURN = 175.0; // <<<--- TUNE: How many mm must one wheel travel for a 90-degree turn?
+const float ENCODER_TICK_TO_MM = 4.45;     // Your 'step_dist'. (mm traveled per encoder tick)
 
-// --- Sensor Timing ---
-unsigned long lastSensorReadTime = 0;
+// --- Motor, Encoder, and Sensor Pins ---
+const int encoder_left = 2;   // Interrupt Pin
+const int encoder_right = 3;  // Interrupt Pin
+const int in1 = 6;
+const int in2 = 7;
+const int in3 = 8;
+const int in4 = 9;
+const int pwm_left = 5;
+const int pwm_right = 10;
+#define TRIG_PIN 12
+#define ECHO_PIN 11
+const float OBSTACLE_DISTANCE_CM = 15.0;
 
-// --- Serial Communication ---
-String incomingEspCmd = "";
-bool commandComplete = false;
+// --- Motor Control & PID Variables ---
+volatile long left_counter = 0;
+volatile long right_counter = 0;
+float Kp = 2.0;
+float Kd = 1.0;
+int base_pwm = 150;
 
-// --- Function Declarations ---
-void handleSerial();
-void parseAndExecuteCommand(String cmd);
-void startMoveForward(double distanceGridUnits);
-void startTurn(bool turnLeft); // true for left, false for right
-void updateMovement();
-void updateOdometry();
-void stopMotors();
-void setMotorSpeeds(int leftSpeed, int rightSpeed); // Handles direction based on sign
-double readUltrasonicCm();
-void reportStatus(const char* status, double x, double y, double theta);
-void encoderLeftISR();
-void encoderRightISR();
+// --- Status Codes (To send back to ESP) ---
+const char* STATUS_INIT = "INIT";
+const char* STATUS_DONE = "DONE";
+const char* STATUS_OBSTACLE = "OBSTACLE";
 
-
-// --- Setup ---
+// ======================================================
+// ==                      SETUP                       ==
+// ======================================================
 void setup() {
-    Serial.begin(115200); // Match ESP baud rate
-    Serial.println("Arduino Booting...");
+  Serial.begin(115200); // For PC debugging
+  while (!Serial);
+  Serial.println("\n\n-- Integrated Arduino Mega Robot Controller --");
 
-    // Motor Pins
-    pinMode(ENA, OUTPUT);
-    pinMode(IN1, OUTPUT);
-    pinMode(IN2, OUTPUT);
-    pinMode(ENB, OUTPUT);
-    pinMode(IN3, OUTPUT);
-    pinMode(IN4, OUTPUT);
-    stopMotors();
+  ESP_SERIAL.begin(ESP_BAUD_RATE);
+  Serial.print("Listening to ESP8266 on Serial2 at ");
+  Serial.print(ESP_BAUD_RATE);
+  Serial.println(" baud.");
 
-    // Encoder Pins & Interrupts
-    pinMode(ENCODER_LEFT_A, INPUT_PULLUP);
-    pinMode(ENCODER_LEFT_B, INPUT_PULLUP);
-    pinMode(ENCODER_RIGHT_A, INPUT_PULLUP);
-    pinMode(ENCODER_RIGHT_B, INPUT_PULLUP);
-    attachInterrupt(digitalPinToInterrupt(ENCODER_LEFT_A), encoderLeftISR, RISING);
-    attachInterrupt(digitalPinToInterrupt(ENCODER_RIGHT_A), encoderRightISR, RISING);
+  // Pin Configurations
+  pinMode(encoder_left, INPUT_PULLUP);
+  pinMode(encoder_right, INPUT_PULLUP);
+  pinMode(in1, OUTPUT); pinMode(in2, OUTPUT);
+  pinMode(in3, OUTPUT); pinMode(in4, OUTPUT);
+  pinMode(pwm_left, OUTPUT); pinMode(pwm_right, OUTPUT);
+  pinMode(TRIG_PIN, OUTPUT); pinMode(ECHO_PIN, INPUT);
 
-    // Sensor Pins
-    pinMode(TRIG_PIN, OUTPUT);
-    pinMode(ECHO_PIN, INPUT);
-
-    // Initialize odometry
-    currentX_Grid = 0.0; // Or load from EEPROM if needed
-    currentY_Grid = 0.0;
-    currentTheta_Rad = 0.0; // Start facing along positive X-axis (East)
-    encoderLeftCount = 0;
-    encoderRightCount = 0;
-    lastLeftCount = 0;
-    lastRightCount = 0;
-
-
-    // PID Setup (if using library)
-    // pidDistance = new PID(&distanceInput, &distanceOutput, &distanceSetpoint, Kp_dist, Ki_dist, Kd_dist, DIRECT);
-    // pidAngle = new PID(&angleInput, &angleOutput, &angleSetpoint, Kp_angle, Ki_angle, Kd_angle, DIRECT);
-    // pidDistance.SetMode(AUTOMATIC);
-    // pidAngle.SetMode(AUTOMATIC);
-
-    currentState = STATE_IDLE;
-    Serial.println("Arduino Ready.");
-
-    // **IMPORTANT**: Removed sending INIT_POS from setup as ESP now uses fixed start.
-    // Arduino now just starts tracking from its internal 0,0,0.
-    // The ESP's first reportStatusToServer(StatusInit, FIXED_START_X, ...)
-    // establishes the initial link between Arduino's relative tracking and the server's absolute grid.
+  // Attach Interrupts for Encoders
+  attachInterrupt(digitalPinToInterrupt(encoder_left), leftISR, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(encoder_right), rightISR, CHANGE);
 }
 
-// --- Main Loop ---
+// ======================================================
+// ==                   MAIN LOOP                      ==
+// ======================================================
 void loop() {
-    handleSerial(); // Check for commands from ESP
+  readFromEsp();
 
-    if (currentState != STATE_IDLE) {
-        updateMovement(); // Handle ongoing movement, sensor checks, PID, etc.
+  if (!isInitialized) {
+    if (millis() - lastInitSendTime > 2000) {
+      Serial.println("Handshake: Sending INIT to ESP...");
+      send_status_report(STATUS_INIT);
+      lastInitSendTime = millis();
     }
+  }
+
+  if (commandReady) {
+    commandReady = false;
+    processCommand(espSerialBuffer);
+    espSerialBuffer = "";
+  }
 }
 
-// --- Serial Communication ---
-void handleSerial() {
-    while (Serial.available() > 0) {
-        char c = Serial.read();
-        if (c == '\n') {
-            // Process complete command
-            if (incomingEspCmd.length() > 0) {
-                // Only execute if IDLE, otherwise ignore new commands during movement
-                if (currentState == STATE_IDLE) {
-                    parseAndExecuteCommand(incomingEspCmd);
-                } else {
-                    Serial.print("Warn: Ignoring command '");
-                    Serial.print(incomingEspCmd);
-                    Serial.println("' while busy.");
-                }
-                incomingEspCmd = ""; // Clear buffer
-            }
-        } else if (c >= 0) {
-            incomingEspCmd += c;
-            if (incomingEspCmd.length() > 100) { // Prevent buffer overflow
-                 Serial.println("ERR: Incoming command too long!");
-                 incomingEspCmd = "";
-            }
-        }
-    }
+// ======================================================
+// ==            COMMAND & STATUS HANDLING             ==
+// ======================================================
+
+void readFromEsp() {
+  while (ESP_SERIAL.available() > 0) {
+    char c = ESP_SERIAL.read();
+    if (c == '\n') { commandReady = true; break; } 
+    else { espSerialBuffer += c; }
+  }
 }
 
-void parseAndExecuteCommand(String cmd) {
-    Serial.print("Received Command: ");
-    Serial.println(cmd);
+void processCommand(String command) {
+  isInitialized = true;
+  command.trim();
+  Serial.print("Received from ESP: "); Serial.println(command);
 
-    if (cmd.startsWith("CMD:")) {
-        String actualCmd = cmd.substring(4); // Remove "CMD:" prefix
+  char cmd_type[20];
+  int value;
+  int parsed = sscanf(command.c_str(), "CMD:%[^(](%d)", cmd_type, &value);
 
-        if (actualCmd.startsWith("FORWARD")) {
-            // Assuming format FORWARD(1) - extract the number if needed later
-            startMoveForward(1.0); // Start moving forward 1 grid unit
-        } else if (actualCmd.startsWith("TURN_LEFT")) {
-            startTurn(true); // Start turning left 90 deg
-        } else if (actualCmd.startsWith("TURN_RIGHT")) {
-            startTurn(false); // Start turning right 90 deg
-        } else {
-            Serial.print("ERR: Unknown command received: ");
-            Serial.println(actualCmd);
-            // Optionally report an error back? Or just ignore.
-        }
+  if (parsed >= 1) {
+    String cmdStr = String(cmd_type);
+    const char* resultStatus;
+
+    if (cmdStr.equalsIgnoreCase("FORWARD")) {
+      resultStatus = go_straight(value > 0 ? value : 1);
+    } else if (cmdStr.equalsIgnoreCase("TURN_LEFT")) {
+      resultStatus = turn_left();
+    } else if (cmdStr.equalsIgnoreCase("TURN_RIGHT")) {
+      resultStatus = turn_right();
     } else {
-         Serial.print("ERR: Invalid command format: ");
-         Serial.println(cmd);
+      Serial.print("Unknown command type: "); Serial.println(cmdStr);
+      isInitialized = false; // Re-enable handshake if command is bad
+      return;
     }
+    
+    send_status_report(resultStatus);
+  } else {
+    Serial.print("Failed to parse command: "); Serial.println(command);
+    isInitialized = false; // Re-enable handshake if command is bad
+  }
 }
 
-// --- Movement Control ---
-
-void startMoveForward(double distanceGridUnits) {
-    Serial.print("Starting Move Forward: ");
-    Serial.print(distanceGridUnits);
-    Serial.println(" grid units");
-
-    // Calculate target distance in CM based on grid units
-    targetDistanceCm = distanceGridUnits * TARGET_DISTANCE_PER_FORWARD;
-    distanceMovedCm = 0.0; // Reset distance counter
-    targetReached = false;
-
-    // Reset encoder diffs for accurate distance tracking for this segment
-    noInterrupts(); // Temporarily disable interrupts to read volatile vars safely
-    lastLeftCount = encoderLeftCount;
-    lastRightCount = encoderRightCount;
-    interrupts(); // Re-enable interrupts
-
-    currentState = STATE_MOVING_FORWARD;
-    setMotorSpeeds(BASE_SPEED_PWM, BASE_SPEED_PWM); // Start moving forward
+void send_status_report(const char* status) {
+  String report = "STATUS:" + String(status) +
+                  ":X:" + String(robotState.x) + ":Y:" + String(robotState.y) +
+                  ":T:" + String(robotState.theta) + "\n";
+  Serial.print("Sending to ESP: "); Serial.print(report);
+  ESP_SERIAL.print(report);
 }
 
-void startTurn(bool turnLeft) {
-    Serial.print("Starting Turn: ");
-    Serial.println(turnLeft ? "Left" : "Right");
+// ======================================================
+// ==              MOVEMENT FUNCTIONS                  ==
+// ======================================================
 
-    // Calculate target angle change - add/subtract from current theta
-    if (turnLeft) {
-        targetThetaRad = currentTheta_Rad + TARGET_RADIANS_PER_TURN;
-    } else {
-        targetThetaRad = currentTheta_Rad - TARGET_RADIANS_PER_TURN;
+const char* go_straight(int grid_cells) {
+  float target_dist_mm = grid_cells * GRID_CELL_DISTANCE_MM;
+  reset_encoders();
+
+  // Set motor direction to FORWARD
+  digitalWrite(in1, HIGH); digitalWrite(in2, LOW);
+  digitalWrite(in3, HIGH); digitalWrite(in4, LOW);
+
+  long previous_count_L = 0;
+  long previous_count_R = 0;
+  
+  while (true) {
+    if (check_obstacle()) {
+      stop_motors();
+      Serial.println("!!! OBSTACLE DETECTED !!!");
+      return STATUS_OBSTACLE;
     }
-    // Normalize angle if needed (keep within -PI to PI or 0 to 2PI)
-    // targetThetaRad = fmod(targetThetaRad + PI, 2.0*PI) - PI; // Example normalization to -PI to PI
 
-    angleTurnedRad = 0.0; // Reset angle counter
-    targetReached = false;
+    int error = left_counter - right_counter;
+    int derivative = (left_counter - previous_count_L) - (right_counter - previous_count_R);
+    int correction = Kp * error + Kd * derivative;
 
-    // Reset encoder diffs for accurate angle tracking for this segment
-    noInterrupts();
-    lastLeftCount = encoderLeftCount;
-    lastRightCount = encoderRightCount;
-    interrupts();
+    int pwm_L = base_pwm - correction;
+    int pwm_R = base_pwm + correction;
+    analogWrite(pwm_left, constrain(pwm_L, 0, 255));
+    analogWrite(pwm_right, constrain(pwm_R, 0, 255));
 
-    currentState = STATE_TURNING;
-
-    // Set motors to turn in place
-    if (turnLeft) {
-        setMotorSpeeds(-BASE_SPEED_PWM, BASE_SPEED_PWM); // Left reverse, Right forward
-    } else {
-        setMotorSpeeds(BASE_SPEED_PWM, -BASE_SPEED_PWM); // Left forward, Right reverse
+    previous_count_L = left_counter;
+    previous_count_R = right_counter;
+    
+    float current_dist_mm = ((left_counter + right_counter) / 2.0) * ENCODER_TICK_TO_MM;
+    if (current_dist_mm >= target_dist_mm) {
+      break; // Exit the loop when distance is reached
     }
+    delay(10); // Small delay to prevent starving other processes
+  }
+
+  stop_motors();
+
+  switch(robotState.theta) {
+    case 0: robotState.y += grid_cells; break; // North
+    case 1: robotState.x += grid_cells; break; // East
+    case 2: robotState.y -= grid_cells; break; // South
+    case 3: robotState.x -= grid_cells; break; // West
+  }
+  return STATUS_DONE;
 }
 
-// This function is called repeatedly during movement
-void updateMovement() {
-    // 1. Update Odometry based on encoder counts since last update
-    updateOdometry();
+const char* turn_right() {
+  reset_encoders();
+  // Left motor forward, right motor backward
+  digitalWrite(in1, HIGH); digitalWrite(in2, LOW);
+  digitalWrite(in3, LOW); digitalWrite(in4, HIGH);
 
-    // 2. Check for Obstacles (periodically)
-    unsigned long now = millis();
-    if (now - lastSensorReadTime >= SENSOR_READ_INTERVAL_MS) {
-        lastSensorReadTime = now;
-        double distance = readUltrasonicCm();
-        // Only check obstacles when moving forward
-        if (currentState == STATE_MOVING_FORWARD && distance < OBSTACLE_THRESHOLD_CM && distance > 0) {
-            Serial.print("OBSTACLE Detected! Dist: ");
-            Serial.println(distance);
-            stopMotors();
-            reportStatus("OBSTACLE", currentX_Grid, currentY_Grid, currentTheta_Rad);
-            currentState = STATE_IDLE; // Stop current action
-            return; // Exit update function
-        }
-    }
+  analogWrite(pwm_left, base_pwm);
+  analogWrite(pwm_right, base_pwm);
 
-    // 3. Update PID and Motor Speeds (Simplified - just checks target)
-    if (currentState == STATE_MOVING_FORWARD) {
-        // Check if target distance reached
-        if (abs(distanceMovedCm) >= abs(targetDistanceCm)) {
-            targetReached = true;
-        }
-        // ** Placeholder for real PID **
-        // - Calculate error based on distanceMovedCm vs targetDistanceCm
-        // - Calculate error based on difference in left/right counts (to go straight)
-        // - Compute PID output
-        // - setMotorSpeeds(baseSpeed + correction, baseSpeed - correction);
-        if (!targetReached) {
-             setMotorSpeeds(BASE_SPEED_PWM, BASE_SPEED_PWM); // Continue moving (simplified)
-        }
-
-    } else if (currentState == STATE_TURNING) {
-        // Check if target angle reached
-        // Need careful handling of angle wrap-around
-        double angleDiff = targetThetaRad - currentTheta_Rad;
-        // Normalize diff if needed, e.g., handle turn from 350deg to 10deg
-        // ... normalization logic ...
-        // This simplified check uses the total angle turned
-        if (abs(angleTurnedRad) >= abs(TARGET_RADIANS_PER_TURN)) {
-            targetReached = true;
-        }
-
-        // ** Placeholder for real PID **
-        // - Calculate error based on angleTurnedRad vs TARGET_RADIANS_PER_TURN
-        // - Compute PID output for differential speed
-        // - setMotorSpeeds(-turnSpeed, turnSpeed) or setMotorSpeeds(turnSpeed, -turnSpeed);
-        // Keep turning if target not reached (simplified)
-    }
-
-    // 4. Check for Completion
-    if (targetReached) {
-        Serial.println("Target Reached.");
-        stopMotors();
-        // Report DONE status with final calculated position
-        reportStatus("DONE", currentX_Grid, currentY_Grid, currentTheta_Rad);
-        currentState = STATE_IDLE; // Finished action
-    }
+  while( (left_counter * ENCODER_TICK_TO_MM < DEGREES_TO_MM_90_TURN) && 
+         (right_counter * ENCODER_TICK_TO_MM < DEGREES_TO_MM_90_TURN) ) {
+    delay(1);
+  }
+  stop_motors();
+  robotState.theta = (robotState.theta + 1) % 4;
+  return STATUS_DONE;
 }
 
+const char* turn_left() {
+  reset_encoders();
+  // Left motor backward, right motor forward
+  digitalWrite(in1, LOW); digitalWrite(in2, HIGH);
+  digitalWrite(in3, HIGH); digitalWrite(in4, LOW);
 
-// --- Odometry ---
-void updateOdometry() {
-    long currentLeftCount;
-    long currentRightCount;
-
-    // Safely read volatile encoder counts
-    noInterrupts();
-    currentLeftCount = encoderLeftCount;
-    currentRightCount = encoderRightCount;
-    interrupts();
-
-    // Calculate change since last update
-    long deltaLeft = currentLeftCount - lastLeftCount;
-    long deltaRight = currentRightCount - lastRightCount;
-
-    // Convert counts to distance in CM
-    double deltaLeftCm = (double)deltaLeft * CM_PER_ENCODER_COUNT;
-    double deltaRightCm = (double)deltaRight * CM_PER_ENCODER_COUNT;
-
-    // Calculate average distance moved and change in angle
-    double deltaDistanceCm = (deltaLeftCm + deltaRightCm) / 2.0;
-    double deltaThetaRad = (deltaRightCm - deltaLeftCm) / WHEEL_SEPARATION_CM;
-
-    // Update position (using midpoint angle approximation)
-    currentX_Grid += (deltaDistanceCm / CM_PER_GRID_CELL) * cos(currentTheta_Rad + deltaThetaRad / 2.0);
-    currentY_Grid += (deltaDistanceCm / CM_PER_GRID_CELL) * sin(currentTheta_Rad + deltaThetaRad / 2.0);
-    currentTheta_Rad += deltaThetaRad;
-
-    // Normalize angle (optional but good practice, e.g., keep between -PI and PI)
-    while (currentTheta_Rad > PI) currentTheta_Rad -= TWO_PI;
-    while (currentTheta_Rad <= -PI) currentTheta_Rad += TWO_PI;
-
-
-    // Update cumulative distance/angle for current movement segment
-    distanceMovedCm += deltaDistanceCm;
-    angleTurnedRad += deltaThetaRad;
-
-    // Store current counts for the next calculation
-    lastLeftCount = currentLeftCount;
-    lastRightCount = currentRightCount;
-
-     // Debug Odometry Printing (optional - can generate lots of output)
-     // Serial.print("Odom: X="); Serial.print(currentX_Grid);
-     // Serial.print(" Y="); Serial.print(currentY_Grid);
-     // Serial.print(" T="); Serial.print(currentTheta_Rad * RAD_TO_DEG); // Print theta in degrees
-     // Serial.print(" Lc="); Serial.print(currentLeftCount);
-     // Serial.print(" Rc="); Serial.println(currentRightCount);
+  analogWrite(pwm_left, base_pwm);
+  analogWrite(pwm_right, base_pwm);
+  
+  while( (left_counter * ENCODER_TICK_TO_MM < DEGREES_TO_MM_90_TURN) && 
+         (right_counter * ENCODER_TICK_TO_MM < DEGREES_TO_MM_90_TURN) ) {
+    delay(1);
+  }
+  stop_motors();
+  robotState.theta = (robotState.theta + 3) % 4; // Wraps around from 0 to 3
+  return STATUS_DONE;
 }
 
-// --- Motor Control ---
-void stopMotors() {
-    digitalWrite(IN1, LOW);
-    digitalWrite(IN2, LOW);
-    digitalWrite(IN3, LOW);
-    digitalWrite(IN4, LOW);
-    analogWrite(ENA, 0);
-    analogWrite(ENB, 0);
+// ======================================================
+// ==              UTILITY FUNCTIONS                   ==
+// ======================================================
+void leftISR() { left_counter++; }
+void rightISR() { right_counter++; }
+
+void reset_encoders() {
+  stop_motors();
+  delay(50);
+  noInterrupts();
+  left_counter = 0;
+  right_counter = 0;
+  interrupts();
 }
 
-// Sets speeds. Positive = forward, Negative = reverse. Max = +/- 255
-void setMotorSpeeds(int leftSpeed, int rightSpeed) {
-    // Left Motor
-    if (leftSpeed > 0) { // Forward
-        digitalWrite(IN1, HIGH);
-        digitalWrite(IN2, LOW);
-        analogWrite(ENA, min(abs(leftSpeed), 255));
-    } else if (leftSpeed < 0) { // Reverse
-        digitalWrite(IN1, LOW);
-        digitalWrite(IN2, HIGH);
-        analogWrite(ENA, min(abs(leftSpeed), 255));
-    } else { // Stop
-        digitalWrite(IN1, LOW);
-        digitalWrite(IN2, LOW);
-        analogWrite(ENA, 0);
-    }
-
-    // Right Motor
-    if (rightSpeed > 0) { // Forward
-        digitalWrite(IN3, HIGH);
-        digitalWrite(IN4, LOW);
-        analogWrite(ENB, min(abs(rightSpeed), 255));
-    } else if (rightSpeed < 0) { // Reverse
-        digitalWrite(IN3, LOW);
-        digitalWrite(IN4, HIGH);
-        analogWrite(ENB, min(abs(rightSpeed), 255));
-    } else { // Stop
-        digitalWrite(IN3, LOW);
-        digitalWrite(IN4, LOW);
-        analogWrite(ENB, 0);
-    }
+void stop_motors() {
+  analogWrite(pwm_left, 0);
+  analogWrite(pwm_right, 0);
+  digitalWrite(in1, LOW); digitalWrite(in2, LOW);
+  digitalWrite(in3, LOW); digitalWrite(in4, LOW);
 }
 
-// --- Sensors ---
-double readUltrasonicCm() {
-    // Standard HC-SR04 Ping sequence
-    digitalWrite(TRIG_PIN, LOW);
-    delayMicroseconds(2);
-    digitalWrite(TRIG_PIN, HIGH);
-    delayMicroseconds(10);
-    digitalWrite(TRIG_PIN, LOW);
-
-    // Read echo time in microseconds
-    long duration = pulseIn(ECHO_PIN, HIGH, 30000); // Timeout 30ms
-
-    // Calculate distance in cm (speed of sound ~343 m/s or 0.0343 cm/us)
-    // Divide by 2 for round trip
-    double distance = (duration * 0.0343) / 2.0;
-
-    if (duration == 0) { // Timeout or error
-        return 999.0; // Return a large value indicating no object detected / error
-    }
-    return distance;
-}
-
-// --- Reporting ---
-void reportStatus(const char* status, double x, double y, double theta) {
-    // Convert radians back to orientation index for reporting (0=N, 1=E, 2=S, 3=W)
-    // This depends heavily on how your 0 angle relates to N/E/S/W
-    // Assuming 0 rad = East (positive X)
-    int thetaIndex = 0;
-    double angleDeg = fmod(theta * RAD_TO_DEG + 360.0, 360.0); // Normalize to 0-360 deg
-    if (angleDeg >= 45 && angleDeg < 135) thetaIndex = OrientationNorth; // North (Y+) approx 90 deg
-    else if (angleDeg >= 135 && angleDeg < 225) thetaIndex = OrientationWest;  // West (X-) approx 180 deg
-    else if (angleDeg >= 225 && angleDeg < 315) thetaIndex = OrientationSouth; // South (Y-) approx 270 deg
-    else thetaIndex = OrientationEast; // East (X+) approx 0/360 deg
-
-    // Convert double X/Y grid coordinates to nearest integer for reporting
-    int reportX = round(x);
-    int reportY = round(y);
-
-    Serial.print("STATUS:");
-    Serial.print(status);
-    Serial.print(":X:");
-    Serial.print(reportX);
-    Serial.print(":Y:");
-    Serial.print(reportY);
-    Serial.print(":T:");
-    Serial.print(thetaIndex);
-    Serial.println(); // Send newline
-}
-
-// --- Interrupt Service Routines (ISRs) ---
-// Keep ISRs as short and fast as possible!
-void encoderLeftISR() {
-    // Basic counting - Read B pin to determine direction
-    if (digitalRead(ENCODER_LEFT_B) == HIGH) {
-        encoderLeftCount++;
-    } else {
-        encoderLeftCount--;
-    }
-}
-
-void encoderRightISR() {
-    // Basic counting - Read B pin to determine direction
-    if (digitalRead(ENCODER_RIGHT_B) == HIGH) {
-        encoderRightCount++;
-    } else {
-        encoderRightCount--;
-    }
+bool check_obstacle() {
+  digitalWrite(TRIG_PIN, LOW); delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH); delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+  long duration = pulseIn(ECHO_PIN, HIGH, 25000); // 25ms timeout
+  float distance_cm = (duration / 2.0) * 0.0343;
+  return (distance_cm > 0 && distance_cm < OBSTACLE_DISTANCE_CM);
 }

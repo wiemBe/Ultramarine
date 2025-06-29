@@ -9,7 +9,7 @@ const char* ssid = "esptel";        // <<<--- REPLACE
 const char* password = "kdjn5860";  // <<<--- REPLACE
 
 // IMPORTANT: Replace with the actual IP address of your Go server
-const char* serverIp = "192.168.76.239"; // <<<--- REPLACE (Example IP)
+const char* serverIp = "192.168.135.239"; // <<<--- REPLACE (Example IP)
 const uint16_t serverPort = 8080;
 
 const unsigned long WIFI_CONNECT_TIMEOUT = 30000; // 30 seconds
@@ -25,15 +25,15 @@ const unsigned long REPORT_RETRY_DELAY_MS = 3000; // Delay before retrying repor
 // #define ARDUINO_SERIAL Serial1
 
 // Option 2: Software Serial
-// #include <SoftwareSerial.h>
-// const byte ARDUINO_RX_PIN = D5; // GPIO14
-// const byte ARDUINO_TX_PIN = D6; // GPIO12
-// SoftwareSerial ArduinoSerial(ARDUINO_RX_PIN, ARDUINO_TX_PIN);
-// #define ARDUINO_SERIAL ArduinoSerial
+#include <SoftwareSerial.h>
+const byte ARDUINO_RX_PIN = D5; // GPIO14
+const byte ARDUINO_TX_PIN = D6; // GPIO12
+SoftwareSerial ArduinoSerial(ARDUINO_RX_PIN, ARDUINO_TX_PIN);
+#define ARDUINO_SERIAL ArduinoSerial
 
 // Option 3: Default Hardware Serial (Serial) - Shared with USB Monitor! Use with caution.
-#define ARDUINO_SERIAL Serial
-const unsigned long ARDUINO_BAUD_RATE = 115200;
+//#define ARDUINO_SERIAL Serial
+const unsigned long ARDUINO_BAUD_RATE = 9600;
 
 // --- Robot Command/Status Constants (Mirrored from Go Server) ---
 // Server Commands (Received)
@@ -105,8 +105,9 @@ void setup() {
     Serial.println("\n\nESP8266 Robot Coordinator Booting...");
 
     ARDUINO_SERIAL.begin(ARDUINO_BAUD_RATE);
-    Serial.printf("Arduino Serial (%s) initialized at %lu baud.\n",
-        (&ARDUINO_SERIAL == &Serial) ? "Shared USB Serial" : "Dedicated Serial", ARDUINO_BAUD_RATE);
+    Serial.println("Arduino Serial (using SoftwareSerial on D5/D6) initialized.");
+    Serial.print("Baud rate set to: ");
+    Serial.println(ARDUINO_BAUD_RATE);
 
     connectWiFi();
     setState(STATE_BOOTING);
@@ -349,45 +350,54 @@ bool sendCommandToArduino(String command) {
     return bytesSent > 0;
 }
 
-bool readAndParseArduinoResponse() {
-    // Check for INIT_POS specifically in BOOTING state
-    if (currentState == STATE_BOOTING && arduinoSerialBuffer.startsWith("INIT_POS:")) {
-         Serial.print("Parsing INIT_POS: "); Serial.println(arduinoSerialBuffer);
-         int x = -1, y = -1, t = -1;
-         int parsedCount = sscanf(arduinoSerialBuffer.c_str(), "INIT_POS:X:%d:Y:%d:T:%d", &x, &y, &t);
 
-         if (parsedCount == 3 && x != -1 && y != -1 && t != -1 && t >= OrientationNorth && t <= OrientationWest) {
-             lastReportedX = x; lastReportedY = y; lastReportedTheta = t;
-             initialPositionReceived = true;
-             Serial.printf("Initial position received: X=%d, Y=%d, Theta=%d\n", x, y, t);
-             setState(STATE_IDLE); // Arduino ready, move to IDLE
-             return true;
-         } else { Serial.println("Failed to parse INIT_POS format."); return false; }
-    }
-    // Check for STATUS response specifically in WAITING_FOR_ARDUINO state
-    else if (currentState == STATE_WAITING_FOR_ARDUINO && arduinoSerialBuffer.startsWith("STATUS:")) {
-        Serial.print("Parsing STATUS: "); Serial.println(arduinoSerialBuffer);
-        char statusStr[20] = {0}; // Initialize buffer
+bool readAndParseArduinoResponse() {
+    // We are now looking for a "STATUS:" message in both BOOTING and WAITING states.
+    if ((currentState == STATE_BOOTING || currentState == STATE_WAITING_FOR_ARDUINO) && arduinoSerialBuffer.startsWith("STATUS:")) {
+        
+        Serial.print("Parsing valid STATUS message from Arduino: "); Serial.println(arduinoSerialBuffer);
+        
+        char statusStr[20] = {0}; // Buffer for the status text (e.g., "INIT", "DONE")
         int x = -1, y = -1, t = -1;
+        
+        // Parse the incoming string
         int parsedCount = sscanf(arduinoSerialBuffer.c_str(), "STATUS:%19[^:]:X:%d:Y:%d:T:%d", statusStr, &x, &y, &t);
 
-        if (parsedCount == 4 && x != -1 && y != -1 && t != -1 && t >= OrientationNorth && t <= OrientationWest) {
-            String tempStatus = String(statusStr); tempStatus.toUpperCase(); lastArduinoStatus = tempStatus;
-            lastReportedX = x; lastReportedY = y; lastReportedTheta = t;
-            Serial.printf("Status from Arduino: %s, Pos: X=%d, Y=%d, Theta=%d\n", lastArduinoStatus.c_str(), x, y, t);
+        if (parsedCount == 4) {
+            String tempStatus = String(statusStr);
+            tempStatus.toUpperCase();
+            lastArduinoStatus = tempStatus;
+            
+            lastReportedX = x;
+            lastReportedY = y;
+            lastReportedTheta = t;
+            Serial.printf("Parsed Status: %s, Pos: X=%d, Y=%d, Theta=%d\n", lastArduinoStatus.c_str(), x, y, t);
 
-            if (lastArduinoStatus == StatusDone || lastArduinoStatus == StatusObstacle) {
-                setState(STATE_REPORTING_TO_SERVER); // Got valid status, report it
+            // If we are booting and we get the INIT message, we are ready to move to IDLE
+            if (currentState == STATE_BOOTING && lastArduinoStatus == StatusInit) {
+                initialPositionReceived = true;
+                Serial.println("Initial position handshake complete! Moving to IDLE state.");
+                setState(STATE_IDLE);
                 return true;
-            } else {
-                Serial.print("Warn: Unknown status from Arduino: "); Serial.println(lastArduinoStatus);
-                lastArduinoStatus = StatusObstacle; // Assume obstacle
-                setState(STATE_REPORTING_TO_SERVER);
-                return true; // Parsed something, report as obstacle
             }
-        } else { Serial.println("Failed to parse STATUS format."); return false; }
+            
+            // If we were waiting for a command to finish, and we got DONE or OBSTACLE
+            if (currentState == STATE_WAITING_FOR_ARDUINO && (lastArduinoStatus == StatusDone || lastArduinoStatus == StatusObstacle)) {
+                setState(STATE_REPORTING_TO_SERVER); // Got a valid status, report it
+                return true;
+            }
+            
+            // If we get here, the message was parsed but wasn't the one we expected for the current state.
+            Serial.println("Warning: Parsed status message, but it was not expected in the current state.");
+            return false;
+
+        } else {
+            Serial.println("Error: Message started with STATUS: but format was incorrect.");
+            return false;
+        }
     }
-    // No relevant message found in buffer for the current state
+    
+    // If the message didn't start with STATUS: or we weren't in the right state, it's a failure.
     return false;
 }
 
