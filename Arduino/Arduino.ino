@@ -1,10 +1,19 @@
-// =====================================================================
-// ==  INTEGRATED ROBOT CONTROLLER FOR ARDUINO MEGA                   ==
+// ======================================================================
+// ==  INTEGRATED ROBOT CONTROLLER FOR ARDUINO UNO                    ==
 // ==  Listens to commands from ESP, controls motors, and reports back ==
-// =====================================================================
+// ======================================================================
+
+// --- UNO-SPECIFIC CHANGES: Include and configure SoftwareSerial ---
+#include <SoftwareSerial.h>
+
+// We will create a virtual serial port on pins 4 and 7 for the ESP
+// You can change these pins if needed, as long as they are free.
+const byte ESP_RX_PIN = 4; // Uno RX pin, connect to ESP TX pin (via level shifter)
+const byte ESP_TX_PIN = 7; // Uno TX pin, connect to ESP RX pin (via level shifter)
+SoftwareSerial espSerial(ESP_RX_PIN, ESP_TX_PIN);
 
 // --- Communication with ESP8266 ---
-#define ESP_SERIAL Serial2
+#define ESP_SERIAL espSerial // Use our new software serial port
 const unsigned long ESP_BAUD_RATE = 9600; // MUST MATCH ESP8266 CODE
 String espSerialBuffer = "";
 bool commandReady = false;
@@ -17,24 +26,24 @@ struct RobotState {
   int y;
   int theta; // 0:North, 1:East, 2:South, 3:West
 };
-RobotState robotState = {0, 0, 0}; // Initial position at (0,0) facing North
+RobotState robotState = {0, 0, 0};
 
 // --- Physical Constants (IMPORTANT: TUNE THESE FOR YOUR ROBOT!) ---
-const float GRID_CELL_DISTANCE_MM = 200.0; // <<<--- TUNE: How many mm is one "FORWARD(1)" move?
-const float DEGREES_TO_MM_90_TURN = 175.0; // <<<--- TUNE: How many mm must one wheel travel for a 90-degree turn?
-const float ENCODER_TICK_TO_MM = 4.45;     // Your 'step_dist'. (mm traveled per encoder tick)
+const float GRID_CELL_DISTANCE_MM = 600.0;
+const float DEGREES_TO_MM_90_TURN = 175.0;
+const float ENCODER_TICK_TO_MM = 2.25;
 
-// --- Motor, Encoder, and Sensor Pins ---
-const int encoder_left = 2;   // Interrupt Pin
-const int encoder_right = 3;  // Interrupt Pin
-const int in1 = 6;
-const int in2 = 7;
-const int in3 = 8;
+// --- Pin Assignments (All are valid on Uno) ---
+const int encoder_left = 2;   // Interrupt Pin 0 on Uno
+const int encoder_right = 3;  // Interrupt Pin 1 on Uno
+const int in1 = 8;
+const int in2 = 6; // Changed from 7 to avoid conflict with new ESP_TX_PIN
+const int in3 = 10;
 const int in4 = 9;
 const int pwm_left = 5;
-const int pwm_right = 10;
+const int pwm_right = 11;
 #define TRIG_PIN 12
-#define ECHO_PIN 11
+#define ECHO_PIN 13
 const float OBSTACLE_DISTANCE_CM = 15.0;
 
 // --- Motor Control & PID Variables ---
@@ -49,16 +58,18 @@ const char* STATUS_INIT = "INIT";
 const char* STATUS_DONE = "DONE";
 const char* STATUS_OBSTACLE = "OBSTACLE";
 
+
 // ======================================================
 // ==                      SETUP                       ==
 // ======================================================
 void setup() {
   Serial.begin(115200); // For PC debugging
   while (!Serial);
-  Serial.println("\n\n-- Integrated Arduino Mega Robot Controller --");
+  Serial.println("\n\n-- Integrated Arduino UNO Robot Controller --");
 
+  // Start the SoftwareSerial port for the ESP
   ESP_SERIAL.begin(ESP_BAUD_RATE);
-  Serial.print("Listening to ESP8266 on Serial2 at ");
+  Serial.print("Listening to ESP8266 on SoftwareSerial at ");
   Serial.print(ESP_BAUD_RATE);
   Serial.println(" baud.");
 
@@ -70,7 +81,7 @@ void setup() {
   pinMode(pwm_left, OUTPUT); pinMode(pwm_right, OUTPUT);
   pinMode(TRIG_PIN, OUTPUT); pinMode(ECHO_PIN, INPUT);
 
-  // Attach Interrupts for Encoders
+  // Attach Interrupts (Pins 2 and 3 are the only interrupt pins on the Uno)
   attachInterrupt(digitalPinToInterrupt(encoder_left), leftISR, CHANGE);
   attachInterrupt(digitalPinToInterrupt(encoder_right), rightISR, CHANGE);
 }
@@ -95,6 +106,25 @@ void loop() {
     espSerialBuffer = "";
   }
 }
+
+
+//
+// THE REST OF THE CODE (command handling, movement functions, utilities)
+// IS IDENTICAL TO THE MEGA VERSION AND IS OMITTED HERE FOR BREVITY.
+// COPY AND PASTE ALL THE FUNCTIONS FROM YOUR MEGA CODE FROM THIS POINT DOWN.
+//
+// void readFromEsp() { ... }
+// void processCommand(String command) { ... }
+// void send_status_report(const char* status) { ... }
+// const char* go_straight(int grid_cells) { ... }
+// const char* turn_right() { ... }
+// const char* turn_left() { ... }
+// void leftISR() { ... }
+// void rightISR() { ... }
+// void reset_encoders() { ... }
+// void stop_motors() { ... }
+// bool check_obstacle() { ... }
+//
 
 // ======================================================
 // ==            COMMAND & STATUS HANDLING             ==

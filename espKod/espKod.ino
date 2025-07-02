@@ -5,11 +5,11 @@
 // #include <SoftwareSerial.h> // Include if using SoftwareSerial for Arduino comms
 
 // --- Configuration ---
-const char* ssid = "esptel";        // <<<--- REPLACE
-const char* password = "kdjn5860";  // <<<--- REPLACE
+const char* ssid = "esadtel";        // <<<--- REPLACE
+const char* password = "esad1234";  // <<<--- REPLACE
 
 // IMPORTANT: Replace with the actual IP address of your Go server
-const char* serverIp = "192.168.135.239"; // <<<--- REPLACE (Example IP)
+const char* serverIp = "192.168.170.239"; // <<<--- REPLACE (Example IP)
 const uint16_t serverPort = 8080;
 
 const unsigned long WIFI_CONNECT_TIMEOUT = 30000; // 30 seconds
@@ -147,19 +147,24 @@ void loop() {
     handleStateMachine();
     delay(50);
 }
-
-// --- State Machine Handler ---
+// =========================================================================
+// == CORRECTED AND MORE ROBUST STATE MACHINE HANDLER FOR ESP8266         ==
+// =========================================================================
 void handleStateMachine() {
-    switch (currentState) {
-        case STATE_BOOTING:
-            if (millis() - lastStateChangeTime > 15000 && !initialPositionReceived) {
-                Serial.println("Timeout waiting for initial position from Arduino.");
-                lastStateChangeTime = millis(); // Reset timer
-                // Consider entering error state if this repeats
-            }
-            // State transition happens in readAndParseArduinoResponse
-            break;
+    // This is the ONLY state where we should be before the Arduino is ready.
+    if (currentState == STATE_BOOTING) {
+        // We do NOTHING in the loop except wait for the serial interrupt to
+        // receive the INIT message. The transition to IDLE happens in
+        // readAndParseArduinoResponse(). We just add a timeout for safety.
+        if (millis() - lastStateChangeTime > 15000 && !initialPositionReceived) {
+            Serial.println("Timeout: Still waiting for initial INIT from Arduino...");
+            lastStateChangeTime = millis(); // Reset timer to try again
+        }
+        return; // IMPORTANT: Do not proceed to the switch statement.
+    }
 
+    // The switch statement is only used for states AFTER the robot is initialized.
+    switch (currentState) {
         case STATE_IDLE:
             if (millis() - lastIdleCheckTime >= IDLE_CHECK_INTERVAL_MS) {
                 lastIdleCheckTime = millis();
@@ -199,7 +204,7 @@ void handleStateMachine() {
             reportStatusToServer(lastArduinoStatus.c_str());
             break;
 
-        case STATE_TASK_FINALIZING: // This state is now less critical
+        case STATE_TASK_FINALIZING:
              Serial.println("Server indicated task complete/error. Returning to Idle.");
              currentTaskID = -1;
              setState(STATE_IDLE);
@@ -207,17 +212,14 @@ void handleStateMachine() {
 
         case STATE_ERROR:
             Serial.println("Entered ERROR state. Halting operations.");
-            // Add LED blink or other indicator
             delay(10000);
-            // Attempt recovery maybe?
-             connectWiFi(); // Try reconnecting WiFi first
+             connectWiFi();
              if(WiFi.status() == WL_CONNECTED) {
-                  setState(STATE_BOOTING); // Try to restart flow if WiFi ok
+                  setState(STATE_BOOTING);
              }
             break;
     }
 }
-
 // --- State Transition Helper ---
 void setState(RobotState newState) {
     if (currentState != newState) {
