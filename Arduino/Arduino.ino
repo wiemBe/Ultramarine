@@ -29,9 +29,9 @@ struct RobotState {
 RobotState robotState = {0, 0, 0};
 
 // --- Physical Constants (IMPORTANT: TUNE THESE FOR YOUR ROBOT!) ---
-const float GRID_CELL_DISTANCE_MM = 600.0;
-const float DEGREES_TO_MM_90_TURN = 175.0;
-const float ENCODER_TICK_TO_MM = 2.25;
+const float GRID_CELL_DISTANCE_MM = 300.0;
+const float DEGREES_TO_MM_90_TURN = 262.5;
+const float ENCODER_TICK_TO_MM = 6.2;
 
 // --- Pin Assignments (All are valid on Uno) ---
 const int encoder_left = 2;   // Interrupt Pin 0 on Uno
@@ -49,9 +49,13 @@ const float OBSTACLE_DISTANCE_CM = 15.0;
 // --- Motor Control & PID Variables ---
 volatile long left_counter = 0;
 volatile long right_counter = 0;
-float Kp = 2.0;
-float Kd = 1.0;
-int base_pwm = 150;
+float Kp = 10.5;
+float Kd = 5.5;
+int base_pwm = 127;
+
+long  left_s_counter = 0; 
+long  right_s_counter = 0; 
+ 
 
 // --- Status Codes (To send back to ESP) ---
 const char* STATUS_INIT = "INIT";
@@ -63,7 +67,7 @@ const char* STATUS_OBSTACLE = "OBSTACLE";
 // ==                      SETUP                       ==
 // ======================================================
 void setup() {
-  Serial.begin(115200); // For PC debugging
+  Serial.begin(115200); 
   while (!Serial);
   Serial.println("\n\n-- Integrated Arduino UNO Robot Controller --");
 
@@ -192,6 +196,9 @@ const char* go_straight(int grid_cells) {
 
   long previous_count_L = 0;
   long previous_count_R = 0;
+
+  unsigned long prev_mil = 0;
+  unsigned long cur_mil = 0;
   
   while (true) {
     if (check_obstacle()) {
@@ -200,17 +207,31 @@ const char* go_straight(int grid_cells) {
       return STATUS_OBSTACLE;
     }
 
-    int error = left_counter - right_counter;
-    int derivative = (left_counter - previous_count_L) - (right_counter - previous_count_R);
+    int cur_mil = millis();
+    int error = (left_s_counter - right_s_counter) / 2;
+    int derivative = (right_s_counter - previous_count_R) / (cur_mil  - prev_mil);
     int correction = Kp * error + Kd * derivative;
+    prev_mil = cur_mil;
 
     int pwm_L = base_pwm - correction;
-    int pwm_R = base_pwm + correction;
+    int pwm_R = (base_pwm + correction);
+    pwm_L = constrain(pwm_L, 0, 255);
+    pwm_R = constrain(pwm_R, 0, 255);
     analogWrite(pwm_left, constrain(pwm_L, 0, 255));
     analogWrite(pwm_right, constrain(pwm_R, 0, 255));
+    /*Serial.print(left_s_counter);
+    Serial.print(" ");
+    Serial.print(right_s_counter);
+    Serial.print(" ");
+    Serial.print(error);
+    Serial.print(" ");
+    Serial.print(pwm_L);
+    Serial.print(" ");
+    Serial.print(pwm_R);
+    Serial.println("");*/
 
-    previous_count_L = left_counter;
-    previous_count_R = right_counter;
+    previous_count_L = left_s_counter;
+    previous_count_R = right_s_counter;
     
     float current_dist_mm = ((left_counter + right_counter) / 2.0) * ENCODER_TICK_TO_MM;
     if (current_dist_mm >= target_dist_mm) {
@@ -269,8 +290,14 @@ const char* turn_left() {
 // ======================================================
 // ==              UTILITY FUNCTIONS                   ==
 // ======================================================
-void leftISR() { left_counter++; }
-void rightISR() { right_counter++; }
+void leftISR() {
+   left_counter++;
+   left_s_counter++; 
+   }
+void rightISR() { 
+  right_counter++; 
+  right_s_counter++;
+  }
 
 void reset_encoders() {
   stop_motors();
@@ -282,8 +309,8 @@ void reset_encoders() {
 }
 
 void stop_motors() {
-  analogWrite(pwm_left, 0);
-  analogWrite(pwm_right, 0);
+  digitalWrite(pwm_left, LOW);
+  digitalWrite(pwm_right, LOW);
   digitalWrite(in1, LOW); digitalWrite(in2, LOW);
   digitalWrite(in3, LOW); digitalWrite(in4, LOW);
 }
