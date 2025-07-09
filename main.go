@@ -129,7 +129,7 @@ var mapHeight int    // Populated by loadMapFromCSV
 // IMPORTANT: Ensure these coordinates are valid (0 or 2) in your loaded map!
 var stationCoords = map[int]Point{
 	1: {X: 7, Y: 20},  // Example: Station 1 - CHECK YOUR MAP!
-	2: {X: 22, Y: 20}, // Example: Station 2 - CHECK YOUR MAP!
+	2: {X: 20, Y: 20}, // Example: Station 2 - CHECK YOUR MAP!
 	3: {X: 22, Y: 5}, // Example: Station 3 - CHECK YOUR MAP!
 	4: {X: 18, Y: 13}, // Example: Station 4 - CHECK YOUR MAP!
 	// <<<--- ADD/MODIFY YOUR ACTUAL STATION COORDINATES HERE --->>>

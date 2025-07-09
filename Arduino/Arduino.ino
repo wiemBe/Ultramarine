@@ -52,7 +52,7 @@ volatile long left_counter = 0;
 volatile long right_counter = 0;
 float Kp = 11.335;
 //önceki 11.25 sağ sapma
-float Kd = 0.11;
+float Kd = 0.1;
 int base_pwm = 150;
 
 long  left_s_counter = 0; 
@@ -221,8 +221,8 @@ const char* go_straight(int grid_cells) {
     }
     if (startup == 1 && (millis() - movementStartTime < 500)) {
    // ilk saniye düz git
-    analogWrite(pwm_left, 170);
-    analogWrite(pwm_right, 200);
+    analogWrite(pwm_left, 150);
+    analogWrite(pwm_right, 170);
     }else {
     startup = 0;
     int cur_mil = millis();
