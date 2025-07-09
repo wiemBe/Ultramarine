@@ -19,6 +19,7 @@ String espSerialBuffer = "";
 bool commandReady = false;
 bool isInitialized = false; 
 unsigned long lastInitSendTime = 0;
+bool firstMovementDone = false;
 
 // --- Robot State (Grid Coordinates) ---
 struct RobotState {
@@ -26,12 +27,12 @@ struct RobotState {
   int y;
   int theta; // 0:North, 1:East, 2:South, 3:West
 };
-RobotState robotState = {0, 0, 0};
+RobotState robotState = {2, 20, 1};
 
 // --- Physical Constants (IMPORTANT: TUNE THESE FOR YOUR ROBOT!) ---
-const float GRID_CELL_DISTANCE_MM = 300.0;
-const float DEGREES_TO_MM_90_TURN = 262.5;
-const float ENCODER_TICK_TO_MM = 6.2;
+const float GRID_CELL_DISTANCE_MM = 200.0;
+const float DEGREES_TO_MM_90_TURN = 262.5; // 262.5
+const float ENCODER_TICK_TO_MM = 6.2;  //6.2
 
 // --- Pin Assignments (All are valid on Uno) ---
 const int encoder_left = 2;   // Interrupt Pin 0 on Uno
@@ -49,13 +50,14 @@ const float OBSTACLE_DISTANCE_CM = 15.0;
 // --- Motor Control & PID Variables ---
 volatile long left_counter = 0;
 volatile long right_counter = 0;
-float Kp = 10.5;
-float Kd = 5.5;
-int base_pwm = 127;
+float Kp = 11.335;
+//önceki 11.25 sağ sapma
+float Kd = 0.11;
+int base_pwm = 150;
 
 long  left_s_counter = 0; 
 long  right_s_counter = 0; 
- 
+int startup;
 
 // --- Status Codes (To send back to ESP) ---
 const char* STATUS_INIT = "INIT";
@@ -88,6 +90,7 @@ void setup() {
   // Attach Interrupts (Pins 2 and 3 are the only interrupt pins on the Uno)
   attachInterrupt(digitalPinToInterrupt(encoder_left), leftISR, CHANGE);
   attachInterrupt(digitalPinToInterrupt(encoder_right), rightISR, CHANGE);
+  startup = 1;
 }
 
 // ======================================================
@@ -156,6 +159,11 @@ void processCommand(String command) {
     const char* resultStatus;
 
     if (cmdStr.equalsIgnoreCase("FORWARD")) {
+      if(!firstMovementDone){
+        startup = 1;
+      }else{
+        startup = 0;
+      }
       resultStatus = go_straight(value > 0 ? value : 1);
     } else if (cmdStr.equalsIgnoreCase("TURN_LEFT")) {
       resultStatus = turn_left();
@@ -165,6 +173,10 @@ void processCommand(String command) {
       Serial.print("Unknown command type: "); Serial.println(cmdStr);
       isInitialized = false; // Re-enable handshake if command is bad
       return;
+    }
+
+    if(String(resultStatus) != STATUS_OBSTACLE){
+      firstMovementDone = true;
     }
     
     send_status_report(resultStatus);
@@ -199,21 +211,28 @@ const char* go_straight(int grid_cells) {
 
   unsigned long prev_mil = 0;
   unsigned long cur_mil = 0;
-  
+  unsigned long movementStartTime = millis();
+
   while (true) {
     if (check_obstacle()) {
       stop_motors();
       Serial.println("!!! OBSTACLE DETECTED !!!");
       return STATUS_OBSTACLE;
     }
-
+    if (startup == 1 && (millis() - movementStartTime < 500)) {
+   // ilk saniye düz git
+    analogWrite(pwm_left, 170);
+    analogWrite(pwm_right, 200);
+    }else {
+    startup = 0;
     int cur_mil = millis();
+    float delta_time = (cur_mil  - prev_mil) / 1000;
     int error = (left_s_counter - right_s_counter) / 2;
-    int derivative = (right_s_counter - previous_count_R) / (cur_mil  - prev_mil);
+    int derivative = (right_s_counter - previous_count_R) / delta_time;
     int correction = Kp * error + Kd * derivative;
     prev_mil = cur_mil;
 
-    int pwm_L = base_pwm - correction;
+    int pwm_L = base_pwm;
     int pwm_R = (base_pwm + correction);
     pwm_L = constrain(pwm_L, 0, 255);
     pwm_R = constrain(pwm_R, 0, 255);
@@ -232,6 +251,7 @@ const char* go_straight(int grid_cells) {
 
     previous_count_L = left_s_counter;
     previous_count_R = right_s_counter;
+  }
     
     float current_dist_mm = ((left_counter + right_counter) / 2.0) * ENCODER_TICK_TO_MM;
     if (current_dist_mm >= target_dist_mm) {
@@ -243,15 +263,16 @@ const char* go_straight(int grid_cells) {
   stop_motors();
 
   switch(robotState.theta) {
-    case 0: robotState.y += grid_cells; break; // North
+    case 0: robotState.y -= grid_cells; break; // North
     case 1: robotState.x += grid_cells; break; // East
-    case 2: robotState.y -= grid_cells; break; // South
+    case 2: robotState.y += grid_cells; break; // South
     case 3: robotState.x -= grid_cells; break; // West
   }
   return STATUS_DONE;
 }
 
 const char* turn_right() {
+  firstMovementDone = true;
   reset_encoders();
   // Left motor forward, right motor backward
   digitalWrite(in1, HIGH); digitalWrite(in2, LOW);
@@ -270,6 +291,7 @@ const char* turn_right() {
 }
 
 const char* turn_left() {
+  firstMovementDone = true;
   reset_encoders();
   // Left motor backward, right motor forward
   digitalWrite(in1, LOW); digitalWrite(in2, HIGH);
@@ -292,12 +314,14 @@ const char* turn_left() {
 // ======================================================
 void leftISR() {
    left_counter++;
+  if(left_s_counter > 6000) left_s_counter = 0;
    left_s_counter++; 
-   }
-void rightISR() { 
-  right_counter++; 
-  right_s_counter++;
   }
+void rightISR() { 
+  right_counter++;
+  if(right_s_counter > 6000) right_s_counter = 0;
+  right_s_counter++;
+}
 
 void reset_encoders() {
   stop_motors();
