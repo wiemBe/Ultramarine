@@ -3,18 +3,17 @@
 // ==  Listens to commands from ESP, controls motors, and reports back ==
 // ======================================================================
 
-// --- UNO-SPECIFIC CHANGES: Include and configure SoftwareSerial ---
 #include <SoftwareSerial.h>
 
-// We will create a virtual serial port on pins 4 and 7 for the ESP
-// You can change these pins if needed, as long as they are free.
+// virtual serial port on pins 4 and 7 for the ESP
+
 const byte ESP_RX_PIN = 4; // Uno RX pin, connect to ESP TX pin (via level shifter)
 const byte ESP_TX_PIN = 7; // Uno TX pin, connect to ESP RX pin (via level shifter)
 SoftwareSerial espSerial(ESP_RX_PIN, ESP_TX_PIN);
 
 // --- Communication with ESP8266 ---
-#define ESP_SERIAL espSerial // Use our new software serial port
-const unsigned long ESP_BAUD_RATE = 9600; // MUST MATCH ESP8266 CODE
+#define ESP_SERIAL espSerial //  software serial port
+const unsigned long ESP_BAUD_RATE = 9600; //  MATCH ESP8266 CODE
 String espSerialBuffer = "";
 bool commandReady = false;
 bool isInitialized = false; 
@@ -29,16 +28,16 @@ struct RobotState {
 };
 RobotState robotState = {2, 20, 1};
 
-// --- Physical Constants (IMPORTANT: TUNE THESE FOR YOUR ROBOT!) ---
+// --- Physical Constants  ---
 const float GRID_CELL_DISTANCE_MM = 200.0;
 const float DEGREES_TO_MM_90_TURN = 262.5; // 262.5
 const float ENCODER_TICK_TO_MM = 6.2;  //6.2
 
-// --- Pin Assignments (All are valid on Uno) ---
+// --- Pin Assignments  ---
 const int encoder_left = 2;   // Interrupt Pin 0 on Uno
 const int encoder_right = 3;  // Interrupt Pin 1 on Uno
 const int in1 = 8;
-const int in2 = 6; // Changed from 7 to avoid conflict with new ESP_TX_PIN
+const int in2 = 6; 
 const int in3 = 10;
 const int in4 = 9;
 const int pwm_left = 5;
